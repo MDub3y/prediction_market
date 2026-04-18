@@ -2,8 +2,12 @@ use anchor_lang::prelude::*;
 use anchor_spl::token::{Mint, Token, TokenAccount};
 use crate::state::Market;
 
-#[derive(Accounts)]
-#[instruction(market_id: u32)]
+
+/*
+    Security guard that checks the accounts before the function runs.
+*/
+#[derive(Accounts)]   // generates code that parses the incoming txn accounts
+#[instruction(market_id: u32)]  // peeks at the arguments
 pub struct InitializeMarket<'info> {
     #[account(
         init,
