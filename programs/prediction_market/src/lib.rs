@@ -11,7 +11,7 @@ declare_id!("E7SEc3kBKSDUv6etpKCnQWSzgxjyJP245iU62EJqzGNM");
 
 #[program]
 pub mod prediction_market {
-    use anchor_spl::token::{self, MintTo, Transfer};
+    use anchor_spl::token::{self, Burn, MintTo, Transfer};
 
     use super::*;
 
@@ -50,7 +50,7 @@ pub mod prediction_market {
     ) -> Result<()> {
         let market = &mut ctx.accounts.market;
 
-        require!(!market.is_settled, PredictionMarketError::MarketSettled);
+        require!(!market.is_settled, PredictionMarketError::MarketAlreadySettled);
         require!(
             Clock::get()?.unix_timestamp < market.settlement_deadline,
             PredictionMarketError::MarketExpired
@@ -70,8 +70,8 @@ pub mod prediction_market {
         )?;
 
         let market_id_bytes = market_id.to_le_bytes();
-        let seeds = &[
-            b"market".as_ref(),
+        let seeds: &[&[u8]] = &[
+            b"market",
             market_id_bytes.as_ref(),
             &[market.bump],
         ];
@@ -106,6 +106,79 @@ pub mod prediction_market {
         market.total_collateral_locked = market.total_collateral_locked.checked_add(amount).ok_or(PredictionMarketError::MathOverflow)?;
         
         msg!("Minted {} outcome tokens for the user", amount);
+        Ok(())
+    }
+
+    pub fn merge_token(
+        ctx: Context<MergeToken>,
+        market_id: u32
+    ) -> Result<()> {
+        let market = &mut ctx.accounts.market;
+
+        require!(!market.is_settled, PredictionMarketError::MarketAlreadySettled);
+        require!(
+            Clock::get()?.unix_timestamp < market.settlement_deadline,
+            PredictionMarketError::MarketExpired
+        );
+
+        let a_bal = ctx.accounts.user_outcome_a.amount;
+        let b_bal = ctx.accounts.user_outcome_b.amount;
+
+        let amount = a_bal.min(b_bal);
+
+        require!(amount > 0, PredictionMarketError::InvalidAmount);
+
+        token::burn(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Burn {
+                    mint: ctx.accounts.outcome_a_mint.to_account_info(),
+                    from: ctx.accounts.user_outcome_a.to_account_info(),
+                    authority: ctx.accounts.user.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+
+        token::burn(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                Burn {
+                    mint: ctx.accounts.outcome_b_mint.to_account_info(),
+                    from: ctx.accounts.user_outcome_b.to_account_info(),
+                    authority: ctx.accounts.user.to_account_info(),
+                },
+            ),
+            amount,
+        )?;
+        let market_id_bytes = market_id.to_le_bytes();
+        let seeds: &[&[u8]] = &[
+            b"market",
+            market_id_bytes.as_ref(),
+            &[market.bump],
+        ];
+        let signer_seeds = &[&seeds[..]];
+
+        token::transfer(
+            CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                Transfer {
+                    from: ctx.accounts.collateral_vault.to_account_info(),
+                    to: ctx.accounts.user_collateral.to_account_info(),
+                    authority: market.to_account_info(),
+                },
+                signer_seeds,
+            ),
+            amount,
+        )?;
+
+        market.total_collateral_locked = market
+                .total_collateral_locked
+                .checked_sub(amount)
+                .ok_or(PredictionMarketError::MathOverflow)?;
+
+        msg!("Merged {} pairs of outcome tokens back to collateral", amount);
+
         Ok(())
     }
 }

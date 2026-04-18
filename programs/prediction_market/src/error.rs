@@ -5,7 +5,7 @@ pub enum PredictionMarketError {
   #[msg("Invalid settlement deadline")]
   InvalidSettlementDeadline,
   #[msg("Market already settled")]
-  MarketSettled,
+  MarketAlreadySettled,
   #[msg("Market has expired")]
   MarketExpired,
   #[msg("Invalid amount")]
