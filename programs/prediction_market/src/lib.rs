@@ -63,15 +63,15 @@ pub mod prediction_market {
                 ctx.accounts.token_program.to_account_info(), 
                 Transfer {
                     from: ctx.accounts.user_collateral.to_account_info(),
-                    to: ctx.accounts.user.to_account_info(),
+                    to: ctx.accounts.collateral_vault.to_account_info(),
                     authority: ctx.accounts.user.to_account_info(),
                 },
             ), amount
         )?;
 
-        let market_id_bytes = market.market_id.to_le_bytes();
+        let market_id_bytes = market_id.to_le_bytes();
         let seeds = &[
-            b"market",
+            b"market".as_ref(),
             market_id_bytes.as_ref(),
             &[market.bump],
         ];
