@@ -4,6 +4,7 @@ pub mod state;
 pub mod instructions;
 pub mod error;
 
+use state::WinningOutcome;
 use instructions::*; 
 use error::PredictionMarketError;
 
@@ -11,7 +12,7 @@ declare_id!("E7SEc3kBKSDUv6etpKCnQWSzgxjyJP245iU62EJqzGNM");
 
 #[program]
 pub mod prediction_market {
-    use anchor_spl::token::{self, Burn, MintTo, Transfer};
+    use anchor_spl::token::{self, Burn, MintTo, SetAuthority, Transfer, spl_token::instruction::AuthorityType};
 
     use super::*;
 
@@ -179,6 +180,68 @@ pub mod prediction_market {
 
         msg!("Merged {} pairs of outcome tokens back to collateral", amount);
 
+        Ok(())
+    }
+
+    pub fn set_winning_side(
+        ctx: Context<SetWinner>,
+        market_id: u32,
+        winner: WinningOutcome
+    ) -> Result<()> {
+        let market = &mut ctx.accounts.market;
+
+        require!(!market.is_settled, PredictionMarketError::MarketAlreadySettled);
+         
+        require!(
+            Clock::get()?.unix_timestamp < market.settlement_deadline,
+            PredictionMarketError::MarketExpired
+        );
+
+        require!(
+            matches!(winner, WinningOutcome::OutcomeA | WinningOutcome::OutcomeB),
+            PredictionMarketError::InvalidWinningOutcome
+        );
+        
+        market.is_settled=true;
+        
+        market.winning_outcome = Some(winner);
+
+   
+        let market_id_bytes = market.market_id.to_le_bytes();
+        let seeds: &[&[u8]] = &[
+            b"market",
+            market_id_bytes.as_ref(),
+            &[market.bump],
+        ];
+        let signer = &[&seeds[..]];
+
+        token::set_authority(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            SetAuthority {
+                account_or_mint: ctx.accounts.outcome_a_mint.to_account_info(),
+                current_authority: market.to_account_info(),
+            },
+            signer,
+        ),
+            AuthorityType::MintTokens,
+            None, 
+        )?;
+
+        token::set_authority(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            SetAuthority {
+                account_or_mint: ctx.accounts.outcome_b_mint.to_account_info(),
+                current_authority: market.to_account_info(),
+            },
+            signer,
+        ),
+            AuthorityType::MintTokens,
+            None,
+        )?;
+
+        msg!("settled. Winner: {:?}", winner);
         Ok(())
     }
 }
