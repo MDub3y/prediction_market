@@ -209,7 +209,7 @@ pub mod prediction_market {
 
         market.winning_outcome = Some(winner);
 
-        let market_id_bytes = market.market_id.to_le_bytes();
+        let market_id_bytes = market_id.to_le_bytes();
         let seeds: &[&[u8]] = &[b"market", market_id_bytes.as_ref(), &[market.bump]];
         let signer = &[&seeds[..]];
 
@@ -277,7 +277,7 @@ pub mod prediction_market {
             amount,
         )?;
 
-        let market_id_bytes = market.market_id.to_le_bytes();
+        let market_id_bytes = market_id.to_le_bytes();
 
         let seeds: &[&[u8]] = &[b"market", market_id_bytes.as_ref(), &[market.bump]];
         token::transfer(
