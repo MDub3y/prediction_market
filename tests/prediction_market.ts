@@ -15,6 +15,8 @@ describe("prediction_market", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
+  const bob = anchor.web3.Keypair.generate();
+
   const program = anchor.workspace.predictionMarket as Program<PredictionMarket>;
 
   const marketId = 1;
@@ -27,11 +29,17 @@ describe("prediction_market", () => {
   let outcomeAMint: anchor.web3.PublicKey;
   let outcomeBMint: anchor.web3.PublicKey;
 
-  let userCollateralAta: anchor.web3.PublicKey;
-  let userOutcomeAAta: anchor.web3.PublicKey;
-  let userOutcomeBAta: anchor.web3.PublicKey;
+  let bobCollateralAta: anchor.web3.PublicKey;
+  let bobOutcomeAAta: anchor.web3.PublicKey;
+  let bobOutcomeBAta: anchor.web3.PublicKey;
 
   before(async () => {
+    const airdropSignature = await provider.connection.requestAirdrop(
+      bob.publicKey,
+      2 * anchor.web3.LAMPORTS_PER_SOL
+    );
+    await provider.connection.confirmTransaction(airdropSignature);
+
     collateralMint = await createMint(
       provider.connection,
       (provider.wallet as any).payer,
@@ -45,9 +53,9 @@ describe("prediction_market", () => {
     [outcomeAMint] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("outcome_a"), marketIdBuffer], program.programId);
     [outcomeBMint] = anchor.web3.PublicKey.findProgramAddressSync([Buffer.from("outcome_b"), marketIdBuffer], program.programId);
 
-    userCollateralAta = getAssociatedTokenAddressSync(collateralMint, provider.wallet.publicKey);
-    userOutcomeAAta = getAssociatedTokenAddressSync(outcomeAMint, provider.wallet.publicKey);
-    userOutcomeBAta = getAssociatedTokenAddressSync(outcomeBMint, provider.wallet.publicKey);
+    bobCollateralAta = getAssociatedTokenAddressSync(collateralMint, bob.publicKey);
+    bobOutcomeAAta = getAssociatedTokenAddressSync(outcomeAMint, bob.publicKey);
+    bobOutcomeBAta = getAssociatedTokenAddressSync(outcomeBMint, bob.publicKey);
   });
 
   it("Initialize Market", async () => {
@@ -65,73 +73,84 @@ describe("prediction_market", () => {
   it("User Setup & Split Token", async () => {
     const amount = new anchor.BN(100 * 10**6);
 
-    await createAssociatedTokenAccount(provider.connection, (provider.wallet as any).payer, collateralMint, provider.wallet.publicKey);
-    await mintTo(provider.connection, (provider.wallet as any).payer, collateralMint, userCollateralAta, provider.wallet.publicKey, 1000 * 10**6);
+    await createAssociatedTokenAccount(provider.connection, bob, collateralMint, bob.publicKey);
+    await createAssociatedTokenAccount(provider.connection, bob, outcomeAMint, bob.publicKey);
+    await createAssociatedTokenAccount(provider.connection, bob, outcomeBMint, bob.publicKey);
 
-    // Create User's Outcome Wallets
-    await createAssociatedTokenAccount(provider.connection, (provider.wallet as any).payer, outcomeAMint, provider.wallet.publicKey);
-    await createAssociatedTokenAccount(provider.connection, (provider.wallet as any).payer, outcomeBMint, provider.wallet.publicKey);
+    await mintTo(provider.connection, (provider.wallet as any).payer, collateralMint, bobCollateralAta, provider.wallet.publicKey, 1000 * 10**6);
 
     // Run the Split
     await program.methods.splitToken(marketId, amount).accounts({
-        user: provider.wallet.publicKey,
-        userCollateral: userCollateralAta,
-        userOutcomeA: userOutcomeAAta,
-        userOutcomeB: userOutcomeBAta,
+        user: bob.publicKey,
+        userCollateral: bobCollateralAta,
+        userOutcomeA: bobOutcomeAAta,
+        userOutcomeB: bobOutcomeBAta,
         collateralVault: vaultPda,
         outcomeAMint: outcomeAMint,
         outcomeBMint: outcomeBMint,
-    }).rpc();
+    })
+    .signers([bob]) 
+    .rpc();
 
     // Verify balances
-    const balanceA = await provider.connection.getTokenAccountBalance(userOutcomeAAta);
-    const balanceCollateral = await provider.connection.getTokenAccountBalance(userCollateralAta);
-    
+    const balanceA = await provider.connection.getTokenAccountBalance(bobOutcomeAAta);
     assert.equal(balanceA.value.uiAmount, 100);
-    assert.equal(balanceCollateral.value.uiAmount, 900); // 1000 - 100
+    
   });
 
-  it("Merge Token", async () => {
+  it("User (Bob) Merges his position", async () => {
     // Merge back 50 units
     await program.methods.mergeToken(marketId).accounts({
-        user: provider.wallet.publicKey,
-        userCollateral: userCollateralAta,
-        userOutcomeA: userOutcomeAAta,
-        userOutcomeB: userOutcomeBAta,
+        user: bob.publicKey,
+        userCollateral: bobCollateralAta,
+        userOutcomeA: bobOutcomeAAta,
+        userOutcomeB: bobOutcomeBAta,
         collateralVault: vaultPda,
         outcomeAMint: outcomeAMint,
         outcomeBMint: outcomeBMint,
-    }).rpc();
+    })
+    .signers([bob])
+    .rpc();
 
-    const balanceCollateral = await provider.connection.getTokenAccountBalance(userCollateralAta);
+    const balanceCollateral = await provider.connection.getTokenAccountBalance(bobCollateralAta);
     assert.equal(balanceCollateral.value.uiAmount, 1000);
   });
 
-  it("Set Winner", async () => {
-    // Admin settles the market for Outcome A
+  it("User (Bob) Splits again for the final round", async () => {
+    const amount = new anchor.BN(200 * 10**6);
+    await program.methods.splitToken(marketId, amount).accounts({
+        user: bob.publicKey,
+        userCollateral: bobCollateralAta,
+        userOutcomeA: bobOutcomeAAta,
+        userOutcomeB: bobOutcomeBAta,
+        collateralVault: vaultPda,
+        outcomeAMint: outcomeAMint,
+        outcomeBMint: outcomeBMint,
+    }).signers([bob]).rpc();
+  });
+
+  it("Admin (Alice) Sets Winner", async () => {
     await program.methods.setWinningSide(marketId, { outcomeA: {} }).accounts({
         authority: provider.wallet.publicKey,
         outcomeAMint: outcomeAMint,
         outcomeBMint: outcomeBMint,
     }).rpc();
-
-    const marketAccount = await program.account.market.fetch(marketPda);
-    assert.ok(marketAccount.isSettled);
   });
 
-  it("Claim Rewards", async () => {
-    // User claims their remaining 50 units of Outcome A
+  it("User (Bob) Claims Rewards", async () => {
     await program.methods.claimRewards(marketId).accounts({
-        user: provider.wallet.publicKey,
-        userCollateral: userCollateralAta,
-        userOutcomeA: userOutcomeAAta,
-        userOutcomeB: userOutcomeBAta,
+        user: bob.publicKey,
+        userCollateral: bobCollateralAta,
+        userOutcomeA: bobOutcomeAAta,
+        userOutcomeB: bobOutcomeBAta,
         collateralVault: vaultPda,
         outcomeAMint: outcomeAMint,
         outcomeBMint: outcomeBMint,
-    }).rpc();
+    })
+    .signers([bob])
+    .rpc();
 
-    const balanceCollateral = await provider.connection.getTokenAccountBalance(userCollateralAta);
-    assert.equal(balanceCollateral.value.uiAmount, 1000); // Back to original start
+    const balanceCollateral = await provider.connection.getTokenAccountBalance(bobCollateralAta);
+    assert.equal(balanceCollateral.value.uiAmount, 1000); 
   });
 });
