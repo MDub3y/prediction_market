@@ -144,11 +144,13 @@ pub struct MergeToken<'info> {
     pub collateral_vault: Account<'info, TokenAccount>,
 
     #[account(
+        mut,
         constraint = outcome_a_mint.key() == market.outcome_a_mint
     )]
     pub outcome_a_mint: Account<'info, Mint>,
 
     #[account(
+        mut,
         constraint = outcome_b_mint.key() == market.outcome_b_mint
     )]
     pub outcome_b_mint: Account<'info, Mint>,
@@ -211,7 +213,7 @@ pub struct ClaimRewards<'info> {
     pub user: Signer<'info>,
     #[account(
         mut,
-        seeds = [b"market", market.market_id.to_le_bytes().as_ref()],
+        seeds = [b"market", market_id.to_le_bytes().as_ref()],
         bump = market.bump,
         constraint = market.market_id == market_id
     )]
